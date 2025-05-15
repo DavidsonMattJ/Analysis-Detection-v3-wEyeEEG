@@ -1,0 +1,354 @@
+% j1B_timestamp_Saccades_pertrial
+
+% load the eye movement data per participant, and identify saccade onset
+% (and duration).
+
+% will try a few-step process:
+% plot the euclidean velocity (from xy positions).
+% find velocity > thresh (per participant).
+% visualise to be sure.
+% modified from Engbert & Kliegl VisRes 2003, https://doi.org/10.1016/S0042-6989(03)00084-1
+
+% Load eye position data
+% eyePos = load('eye_position_data.mat');
+
+% note that all trials are the same duration.
+% according to Lydia eyemvmnts are recorded from 0 to 6.5 seconds.
+%(note that EEG is -1 to 6.5 (?))
+
+visualizeResults=1;
+
+setmydirs_detectv3;
+
+cd(procdatadir);
+
+% we may want to avoid 'saccades' toward trial ends, there are frequent
+% data discontinuities that bias the threshold calculations. 
+
+subjFols = dir([pwd filesep '*summary_data.mat']);
+
+%%
+%%
+for ippant = 1%:length(subjFols)
+    cd(procdatadir)
+    load(subjFols(ippant).name, 'EyeDir', 'HeadPos', 'EyePos', 'trialInfo', 'subjID');
+    savename= subjFols(ippant).name;
+%     ftmp = find(savename =='_');
+%     subjID = savename(1:ftmp(1)-1);
+
+    disp(['Preparing ' subjID]);
+
+
+
+        % try to reorient to fig dir, make subfolder if absent
+        try cd([figdir  filesep 'trial_EyeSaccades' filesep subjID])
+            pfigdir= pwd;
+        catch
+            mkdir([figdir filesep  'trial_EyeSaccades' filesep subjID]);
+            cd([figdir filesep  'trial_EyeSaccades' filesep subjID])
+            pfigdir=pwd;
+        end
+
+        if visualizeResults
+            figure(1); clf;
+            set(gcf, 'units', 'normalized', 'position', [0.01,0.01, .9, .9], 'color', 'w', 'visible', 'off');
+            %
+            pcount=1; % plot indexer
+            figcount=1; %figure counter.
+        end
+
+
+
+        for itrial=55%:length(EyeDir)
+           
+
+            % skip if a bad trial:
+            % note cond 1 == slow.
+            skip=0;
+            rejTrials_detectv3; %toggles skip based on bad trial ID
+
+            if isempty(EyeDir(itrial).Z_clean)
+                skip=1;
+            end
+           
+
+            if skip ==1
+                if visualizeResults==1
+                    subplot(5,3,pcount);
+                    title('badtrial'); hold on;
+                    %                 plot(Eyetrack);
+                    pcount=pcount+1;
+                    if pcount==16
+                        cd(pfigdir)
+                        print('-dpng', [subjID ' trialEyem ' num2str(figcount) ]);
+                        newFig=1;
+                        clf;
+                        pcount=1;
+                    end
+                end
+
+
+                continue % some trials just not worth the attempt.
+
+            end
+
+    
+
+            % where to perform the threshold detection on?
+            timevec = trialInfo(itrial).times';
+            stopAt = length(timevec);
+            eyePos=[];
+            eyePos(:,1) = EyeDir(itrial).Z_clean(1:stopAt); % note we are clipping the final 500 ms.
+            eyePos(:,2) = EyeDir(itrial).Y_clean(1:stopAt);
+            % Calculate velocity time series
+            % first deriv
+            velX = diff(eyePos(:,1))./diff(timevec(1:stopAt))'; % Horizontal velocity
+            velY = diff(eyePos(:,2))./diff(timevec(1:stopAt))'; % Vertical velocity
+            velX = movmean(velX, 5); % Moving average over 5 data points
+            velY = movmean(velY, 5); % Moving average over 5 data points
+
+            % Compute velocity thresholds
+            velX_med = median(velX); % Median of horizontal velocity
+            velY_med = median(velY); % Median of vertical velocity
+            velX_std = median(abs(velX - velX_med)); % Median estimator of standard deviation of horizontal velocity
+            velY_std = median(abs(velY - velY_med)); % Median estimator of standard deviation of vertical velocity
+            velX_thresh = velX_med + 6 * velX_std; % Threshold for horizontal velocity
+            velY_thresh = velY_med + 6 * velY_std; % Threshold for vertical velocity
+
+            % Detect microsaccades
+            min_duration = 2; % Minimum duration in samps = 11ms (samps above threshold) (was 2)
+            saccade_indices = [];
+            
+            %T
+%             Timevec= 1:length(eyePos);
+            [startsX,startsY,endsX, endsY,cluster_lengths_Y, cluster_lengths_X]= deal([]);
+            %%
+            %Xthresh
+            X_above = find(abs(velX)>=velX_thresh)';
+            if ~isempty(X_above)
+            % note the diffs larget than 1 are non-contiguous (11 ms saccade).
+            % otherwise diff of 1 displays the onset of a sacade + fixation.
+            %compute differences between adjacent elements
+            diff_X = diff(X_above);
+            % Find indices of non-one differences, indicating cluster boundaries
+            boundaries = [1,  find(diff_X ~= 1) + 1 , length(X_above)+1 ];
+            % Compute lengths of each cluster
+            cluster_lengths_X = diff(boundaries);
+            % Display the onsets and durations of the clusters
+%             disp([X_above(boundaries(1:end-1))' cluster_lengths_X']);
+            startsX=X_above(boundaries(1:end-1));
+            endsX = startsX + cluster_lengths_X;
+            end
+
+            %Ythresh
+            Y_above = find(abs(velY)>=velY_thresh)';
+            if ~isempty(Y_above)
+            % note the diffs larget than 1 are non-contiguous (11 ms saccade).
+            % otherwise diff of 1 displays the onset of a sacade + fixation.
+            %compute differences between adjacent elements
+            diff_Y = diff(Y_above);
+            % Find indices of non-one differences, indicating cluster boundaries
+            boundaries = [1,  find(diff_Y ~= 1) + 1 , length(Y_above)+1 ];
+            % Compute lengths of each cluster
+            cluster_lengths_Y = diff(boundaries);
+            % Display the onsets and durations of the clusters
+%             disp([Y_above(boundaries(1:end-1))' cluster_lengths_Y']);
+
+            startsY=Y_above(boundaries(1:end-1));
+            endsY = startsY + cluster_lengths_Y;
+            end
+            %%
+
+            % for both the x and y, do some tidying:
+
+            startsXY= {startsX, startsY};
+            endsXY = {endsX, endsY};
+            clustsXY= {cluster_lengths_X, cluster_lengths_Y};
+%             saccade_starts = [startsX, startsY];
+%             saccade_ends = [endsX, endsY];
+            saveas ={'X', 'Y'};
+            for ixy=1:2
+            % remove saccades of min duration.
+            saccade_durs = endsXY{ixy}- startsXY{ixy};
+            keepsac= find(saccade_durs>= min_duration);
+            
+            % also remove saccades before the participants started walkin
+            % (1 second mark).
+
+            keepsac2 = find(startsXY{ixy}>90);
+            keepsac_save = intersect(keepsac,keepsac2);
+%               keepsac_save=keepsac;
+            % STORE:
+            % add to EyeDir
+            EyeDir(itrial).(['saccade_starts' saveas{ixy}])= startsXY{ixy}(keepsac_save);
+%             EyeDir(itrial).saccade_startsY=startsY(keepsac_save);
+            EyeDir(itrial).(['saccade_durs' saveas{ixy}])= clustsXY{ixy}(keepsac_save);
+%             EyeDir(itrial).saccade_dursY=cluster_lengths_Y(keepsac_save);
+            end
+
+%         
+% %%      subplot(2,1,2);
+% clf
+% plot(eyePos(:,1), eyePos(:,2), 'k');
+% hold on;
+% for i = 4%:length(saccade_starts)
+%     plot(eyePos(saccade_starts(i):saccade_ends(i),1), eyePos(saccade_starts(i):saccade_ends(i),2), 'r', 'LineWidth',2);
+% end
+% xlabel('Horizontal Position');
+% ylabel('Vertical Position');
+% title('Detected Saccades');
+% %            for each saccade, we can also determine direction (Left or
+% %             Right from origin).
+% for i = 4%:length(saccade_starts)
+%     plot(eyePos(saccade_starts(i):saccade_ends(i),1), eyePos(saccade_starts(i):saccade_ends(i),2), 'b', 'LineWidth',2);
+% end
+% shg
+%%
+        %we may want to vis the trial onsets and response:
+        if visualizeResults
+
+            % small function to plot per panel:
+            plotD=[];
+            plotD.itrial=itrial;
+            plotD.figcount=figcount;
+            plotD.velX= velX;
+            plotD.velY= velY;
+            plotD.velX_thresh=velX_thresh;
+            plotD.velY_thresh= velY_thresh;
+% show saccades detected
+            plotD.saccX = EyeDir(itrial).saccade_startsX;
+            plotD.saccY = EyeDir(itrial).saccade_startsY;
+            
+
+%             plotD.Eye_O_clean= trial_EyeOrigin;
+%             plotD.Eye_D_clean= trial_EyeData;
+%             plotD.Eye_O_raw= HeadPos(itrial);
+%             plotD.Eye_D_raw= EyeDir(itrial);
+            %show where interp happened:
+%             plotD.blinksAt=blinksAt;
+%             plotD.blinksEnd=blinksEnd;
+           
+            plotD.eyePos= eyePos;
+
+            plotD.Timevec= timevec;
+            
+            plotD.pfigdir= pfigdir;
+            plotD.subjID= subjID;
+
+%             plotD.walkSpeed= pwalk;
+
+            % see funtion defn below.
+            newFig=quickplot(pcount,plotD);
+            if newFig==1
+                pcount=2;
+                figcount=figcount+1;
+            else
+                pcount=pcount+1;
+                if pcount==16
+
+                    cd(pfigdir)
+                    print('-dpng', [subjID ' trialEyem' num2str(figcount)  ]);
+                    newFig=1;
+                    clf;
+                    figcount=figcount+1;
+                    pcount=1;
+                end
+
+            end
+        end % if visualizing...
+
+        end % itrial.
+        %% after all trials, print the final figure (in case uneven subplots/trial counts).
+if visualizeResults
+         cd(pfigdir)
+         print('-dpng', [subjID ' trialEyem' num2str(figcount)  ]);
+end
+        %% resave with new data in structure.
+        cd(procdatadir)
+%         cd(subjID);
+        %%
+        save(savename, 'EyeDir', '-append');
+        disp(['finished j1B timestamp saccades per trial for ' subjID])
+   
+
+end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% calling this function above.
+function newfig= quickplot(pcount, plotD)
+% function to handle subplot placement, and printing/counting new figures.
+%newfig is a flag to start the next figure, toggles subplot count.
+figure(1);
+newfig=0;
+if  pcount ==16
+    %print that figure, and reset trial count.
+
+    cd(plotD.pfigdir)
+    print('-dpng', [plotD.subjID ' trialEyem ' num2str(plotD.figcount)  ' ' plotD.walkSpeed]);
+    newfig=1;
+    clf;
+    pcount=1;
+end
+% subplot(5,3,pcount);
+plot(plotD.Timevec(1:end-1), abs(plotD.velX), 'b');
+hold on;
+plot(plotD.Timevec(1:end-1), abs(plotD.velY), 'r');
+plot([plotD.Timevec(1) plotD.Timevec(end)], [plotD.velX_thresh plotD.velX_thresh], 'b--');
+plot([plotD.Timevec(1) plotD.Timevec(end)], [plotD.velY_thresh plotD.velY_thresh], 'r--');
+axis tight;
+
+%% also plot the detected saccades!
+saccX= plotD.saccX;
+saccY= plotD.saccY;
+for ix= 1:length(saccX)
+
+    plot([plotD.Timevec(saccX(ix)), plotD.Timevec(saccX(ix))], [plotD.velX_thresh plotD.velX_thresh], ['bo'], 'linew',2 )
+
+end
+
+for iy= 1:length(saccY)
+
+    plot([plotD.Timevec(saccY(iy)), plotD.Timevec(saccY(iy))], [plotD.velY_thresh plotD.velY_thresh], ['ko'] , 'linew',2)
+
+end
+
+ylim([ 0 3*max([plotD.velX_thresh, plotD.velY_thresh])])
+
+ylabel('Velocity')
+xlabel('Time ');
+hold on;
+
+yyaxis right;
+%norm then plot.
+
+plot(plotD.Timevec, plotD.eyePos(:,1)- mean( plotD.eyePos(:,1)), 'b-');
+plot(plotD.Timevec, plotD.eyePos(:,2)- mean( plotD.eyePos(:,2)), 'r-');
+ylim([-1 .25])
+title(['Trial ' num2str(plotD.itrial)]);
+%include a total sacc count?
+% nSacc = 
+%%
+end
+
+% 
+% % % plot output:
+% % % Plot velocity time series and detected saccades
+% figure;
+% subplot(2,1,1);
+% plot(abs(velX), 'b');
+% hold on;
+% plot(abs(velY), 'r');
+% plot([0 length(velX)], [velX_thresh velX_thresh], 'b--');
+% plot([0 length(velY)], [velY_thresh velY_thresh], 'r--');
+% xlabel('Time');
+% ylabel('Velocity');
+% legend('Horizontal Velocity', 'Vertical Velocity', 'Horizontal Threshold', 'Vertical Threshold');
+% title('Velocity Time Series');
+% subplot(2,1,2);
+% plot(eyePos(:,1), eyePos(:,2), 'k');
+% hold on;
+% for i = 1:length(saccade_starts)
+%     plot(eyePos(saccade_starts(i):saccade_ends(i),1), eyePos(saccade_starts(i):saccade_ends(i),2), 'r', 'LineWidth',2);
+% end
+% xlabel('Horizontal Position');
+% ylabel('Vertical Position');
+% title('Detected Saccades');

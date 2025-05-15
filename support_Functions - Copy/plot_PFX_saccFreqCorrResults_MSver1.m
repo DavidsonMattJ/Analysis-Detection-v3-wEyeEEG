@@ -1,0 +1,294 @@
+
+function plot_PFX_saccFreqCorrResults_MSver1(cfg, testdata, PFX_FourierNull)
+% % % within this function, we will display the population prevalence.
+% at present, only accuracy data is available (permutations at ppant level
+% are slow).
+
+nGaits_toPlot=2;
+pc=1; % plot counter
+barCols= {'b', 'r', 'm'};
+
+% both this and the next use the same figure function:
+iLR=3;
+gaitfield = {'gc', 'doubgc'};
+gaitprint = {'gait', 'stride'};
+binfield = {'','_binned'};
+usebin=1;
+legp=[]; % for legend
+fntsize=cfg.fntsize;
+
+rankBy2Hz= 1; % rank the erp image by R2 strength.
+%%
+%set up figure:
+
+figure(1); clf
+set(gcf, 'color', 'w', 'units','normalized', 'position', [.05 .05 .65 .95])
+tsAre= {'Accuracy', 'Reaction time', 'Response onset'};
+GFX_NHST=[]; % use to find overlap
+%%
+% wrangle the obs peak freq per subj on each DV.
+
+
+    ppantData_ObsFITS=[]; % ppant Data is the observed per freq. vs shuffled
+    ppantBounds=[]; % shuffle bounds
+    ppantNHST=[]; % result comparing observed to shuffled.
+    ppantDV_Data=[];
+    ppantSINE=[]; % perform sinefits per sig frequency (below).
+
+
+for id=1:length(cfg.DV)
+
+    dataIN= testdata{id};
+    %which field of datastructure to plot?
+    if strcmp(cfg.DV{id}, 'RT')
+        usefield = [gaitfield{nGaits_toPlot} binfield{usebin+1} '_rts'];
+    elseif strcmp(cfg.DV{id}, 'Accuracy')
+        usefield = [gaitfield{nGaits_toPlot}  binfield{usebin+1} '_Acc'];
+
+    elseif strcmp(cfg.DV{id}, 'Counts')
+               usefield = [gaitfield{nGaits_toPlot} binfield{usebin+1} '_counts'];
+
+        if strcmp(cfg.type{id}, 'Saccade')
+            usefield = [gaitfield{nGaits_toPlot} '_sacc_all' binfield{usebin+1} '_counts'];
+    
+        end
+    end
+    %%
+    for ippant = 1:length(PFX_FourierNull)
+
+        ppantData_ObsFITS(ippant,id,:) = PFX_FourierNull(ippant).([cfg.type{id} 'Ons_' usefield '_fitsRsq_Obs']);
+
+        ppantBounds(ippant,id,:) =PFX_FourierNull(ippant).([cfg.type{id} 'Ons_' usefield '_fitsRsq_ShuffCV'])(3,:); % 3rd pos is 95%
+
+        ppantDV_Data(ippant,id,:)= dataIN(ippant,iLR).(usefield);
+       
+        %% convert to relative change?
+        %relative change?
+        tmp= squeeze(ppantDV_Data(ippant,id,:))';
+         meanper = nanmean(tmp);
+        divBy = repmat(meanper, [1, size(ppantDV_Data,3)]);
+        %relative change:
+        ppantDV_Data(ippant,id,:)= (tmp - divBy)./divBy;
+
+
+
+        %% binary NHST:
+        ppantNHST(ippant,id,:) = ppantData_ObsFITS(ippant,id,:) > ppantBounds(ippant,id,:);
+
+
+
+    end % ippant
+end % each data 
+%%
+% now per subject, (and DV), we want to:
+% fit within a cps range (e.g. 1.5 -2.5 cps)
+% retain Amp and peak freq? 
+% plot correlation.
+
+    nsubs = size(ppantNHST,1);
+    NHST = sum(ppantNHST,1);
+
+    testF = [1.5,2.5];
+%     testF=[1.9,2.1];
+    hzind = dsearchn(cfg.Hzspace', testF');
+    %%
+    xvec=linspace(1,100,41);
+    xvec=xvec(1:40);
+    %
+%       % now force a fit at this frequency, to the participant data to extract the
+        % plot:
+
+        % Declaring the type of fit.
+        FitType = 'fourier1';
+        % Creating and showing a table array to specify bounds.
+        CoeffNames_F = coeffnames(fittype(FitType));
+        %set bounds for w
+        CoeffBounds_F = array2table([-Inf(1,length(CoeffNames_F));...
+            Inf(1,length(CoeffNames_F))],'RowNames',...
+            ["lower bound", "upper bound"],'VariableNames',CoeffNames_F);
+
+        %specify range for fit, from 0 to 10 Hz:
+        %
+        %     testw = 2*pi*10/100;
+        %
+        %     CoeffBounds.w(1) = 0;
+        %     CoeffBounds.w(2) = testw;
+
+        testw1 = 2*pi*cfg.Hzspace(hzind(1))/xvec(end);
+        testw2 = 2*pi*cfg.Hzspace(hzind(end))/xvec(end);
+
+        CoeffBounds_F.w(1) = testw1;
+        CoeffBounds_F.w(2) = testw2;
+        %update fit opts settings
+
+        %Update Fit Options setting.
+        FitOpts_F = fitoptions('Method','NonlinearLeastSquares','Lower',table2array(CoeffBounds_F(1,:)),...
+            'Upper',table2array(CoeffBounds_F(2,:)));
+
+
+
+        % perform same for sine model (easier to interpret output).
+        FitType = 'sin1';
+        % Creating and showing a table array to specify bounds.
+        CoeffNames_S = coeffnames(fittype(FitType));
+        %set bounds for w
+        CoeffBounds_S = array2table([-Inf(1,length(CoeffNames_S));...
+            Inf(1,length(CoeffNames_S))],'RowNames',...
+            ["lower bound", "upper bound"],'VariableNames',CoeffNames_S);
+
+
+
+        %         testw = 2*pi*cfg.Hzspace(hzind(ifreq))/xvec(end);
+
+        CoeffBounds_S.b1(1) = testw1;
+        CoeffBounds_S.b1(2) = testw2;
+        %update fit opts settings
+
+        %Update Fit Options setting.
+        FitOpts_S = fitoptions('Method','NonlinearLeastSquares','Lower',table2array(CoeffBounds_S(1,:)),...
+            'Upper',table2array(CoeffBounds_S(2,:)));
+
+        allFs= nan(nsubs,1040);
+        allTheta= nan(nsubs,1);
+        allRho = nan(nsubs,1);
+        allTheta_ns= nan(nsubs,1);
+%
+        %%
+%         use the sine model insteaD:
+
+        %% restrict fit to shorter range(?)
+%         
+
+allRho=[]; % the amp
+allTheta=[]; % the phase 
+allFreq=[]; % the freq (cps).
+  %keep track of who was sig:
+   
+  allFits_sig=[];
+  for iDV=1:4
+
+      ppantData_toFit = squeeze(ppantDV_Data(:,iDV,:));
+      for ippant= 1:size(ppantDV_Data,1)
+
+
+          tmpD=ppantData_toFit(ippant,:);
+          if any(isnan(tmpD));
+              disp(['warning: replacing nan -> 0 for ppant ' num2str(ippant)]);
+              tmpD(isnan(tmpD))=0;
+          end
+          [f,gof]= fit(xvec',tmpD',  'fourier1',FitOpts_F);
+
+          [f_S,gof]= fit(xvec',tmpD',  'sin1',FitOpts_S);
+
+
+
+          
+%                 h=plot(f, xvec,tmpD');%,
+          %
+          % the phase can be expressed as the arctangend of b1/a1,
+          % the ratio of coefficients of the sine and cosine terms.
+          allTheta(ippant,iDV) = f.b1/f.a1;
+          % RHO is the square rt of the sum of squares of the
+          % coefficients of the sine and cosine terms.
+          %rho = sqrt(a1^2 + b1^2)
+
+          allRho(ippant,iDV) = sqrt(f.a1^2 + f.b1^2);
+          % or use sine amp:
+%           allRho(ippant,iDV) =f_S.a1;
+          % plot if this ppant was sig.
+          allFits_sig(ippant,iDV)=any(ppantNHST(ippant,iDV,hzind(1):hzind(2)));
+
+
+          fitperiod = f.w;
+          %convert to period per samples.
+          % include period and Rsquared
+          %treat max xvec as our full 'period'
+          Hzapp = xvec(end)/ (2*pi/(f.w));
+
+          allFreq(ippant,iDV)= Hzapp;
+
+
+      end % each subject
+
+  end % iDV
+
+
+%%
+% plot the R^2 at 2 cps, or 4 cps
+ind2or4 = dsearchn(cfg.Hzspace', [2,4]');
+% we might want to compare the observed fit at each freq:
+Obs_fitcomp = ppantData_ObsFITS(:,:,ind2or4(1))-ppantData_ObsFITS(:,:,ind2or4(2));
+compareFitparam = {wrapTo360(allTheta), allFreq, allRho,Obs_fitcomp};
+compswere={'fit-phase offset','fit-freq', 'fit-amp','cps ratio'};
+clf
+for icomp=1:length(compswere)
+    for iDV=1:3
+        subplot(length(compswere),3,iDV + 3*(icomp-1));
+        useD = compareFitparam{icomp};
+        if icomp==1
+
+            % plot the phase difference:
+            phaseDiff = useD(:,4)-useD(:,iDV);
+            polarhistogram(phaseDiff,36)
+
+            thetaticks([0 90 180 270, 360])
+
+            thetaticklabels({'0','\pi/2','\pi','3\pi/2' })
+
+            [p, Z] = circ_rtest(phaseDiff);
+            % rlim([0 5]);
+            rl= rlim;
+            if p<.05
+                    text(0.65, rl(2)*1.3, ['Z\rm = ' sprintf('%.5f', Z)]);
+                    text(0.5, rl(2)*1.3, ['\itp\rm = ' sprintf('%.5f', p)]);
+                disp(['Z\rm = ' sprintf('%.5f', Z)]);
+                disp(['\itp\rm = ' sprintf('%.5f', p)]);
+
+            else
+                text(1, rl(2)*1.2, '\itns');
+            end
+
+
+        else
+            sX = useD(:,iDV);
+            sY= useD(:,4);
+            sc= scatter(sX,sY);
+            sc.MarkerFaceColor= [.4 .4 .4];
+           
+            ylabel('saccade')
+            xlabel('DV');
+            % correlation for all subjs:
+            [r,p]= corrcoef(sX,sY);
+
+            % now plot just the sig:
+            hold on
+            usep= find(allFits_sig(:,iDV));
+            sX = useD(usep,iDV);
+            sY= useD(usep,4);
+            sc= scatter(sX,sY);
+            sc.MarkerFaceColor= barCols{iDV};
+            
+            % corr for just those sig.
+
+            [rS,pS]= corrcoef(sX,sY);
+             title({[compswere{icomp}];['r=' sprintf('%.2f',r(1,2)) ',p= ' sprintf('%.2f',p(1,2))];...
+                 ['r=' sprintf('%.2f',rS(1,2)) ',p= ' sprintf('%.2f',pS(1,2))]});
+
+
+        end
+    end
+end
+shg
+%%
+
+
+
+
+end % function
+
+
+
+
+
+
+
